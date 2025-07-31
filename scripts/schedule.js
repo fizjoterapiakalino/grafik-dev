@@ -19,7 +19,6 @@ document.addEventListener('DOMContentLoaded', () => {
     let currentCell = null; // The TD cell that the context menu is acting upon
     let draggedCell = null;
     let activeCell = null; // The currently focused element for keyboard nav (TD, TH, or DIV)
-    let previouslyHighlightedTimeCell = null;
 
     const undoStack = [];
     const redoStack = []; // Kept for potential future implementation
@@ -91,19 +90,17 @@ document.addEventListener('DOMContentLoaded', () => {
         const regex = searchTerm ? new RegExp(searchTerm.replace(/[-\/\^$*+?.()|[\]{}]/g, '\$&'), 'gi') : null;
 
         const highlightElement = (element) => {
-            // Najpierw usuń stare podświetlenia
             element.querySelectorAll('span.search-highlight').forEach(highlight => {
                 const parent = highlight.parentNode;
                 while (highlight.firstChild) {
                     parent.insertBefore(highlight.firstChild, highlight);
                 }
                 parent.removeChild(highlight);
-                parent.normalize(); // Łączy sąsiednie węzły tekstowe
+                parent.normalize();
             });
 
-            if (!regex) return; // Jeśli nie ma czego szukać, kończymy po czyszczeniu
+            if (!regex) return;
 
-            // Użyj TreeWalker, aby bezpiecznie znaleźć i zamienić węzły tekstowe
             const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT, null, false);
             const textNodes = [];
             let currentNode;
@@ -177,13 +174,11 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!isEditableTarget) return;
 
         pushStateToUndoStack();
+        
+        const originalValue = getElementText(element);
+        element.dataset.originalValue = originalValue; // Store original value
 
-        if (element.tagName === 'TD' || element.tagName === 'TH') {
-            element.innerHTML = getElementText(element);
-        } else if (element.tagName === 'DIV') {
-            element.innerHTML = getElementText(element);
-        }
-
+        element.innerHTML = getElementText(element);
         element.setAttribute('contenteditable', 'true');
         element.classList.remove('massage-text', 'pnf-text');
         delete element.dataset.isMassage;
@@ -207,43 +202,42 @@ document.addEventListener('DOMContentLoaded', () => {
     const exitEditMode = (element) => {
         if (!element || element.getAttribute('contenteditable') !== 'true') return;
 
-        const originalText = getElementText(element);
+        const originalText = element.dataset.originalValue || '';
+        delete element.dataset.originalValue; // Clean up
         const newText = capitalizeFirstLetter(element.textContent.trim());
 
         element.setAttribute('contenteditable', 'false');
 
-        // Check if a meaningful change occurred before saving
         if (originalText !== newText) {
-            // Re-apply state from data to restore icons/styles if needed
-            const parentCell = element.closest('td');
-            parentCell.innerHTML = ''; // Clear it first
-            
-            if (newText.includes('/')) {
-                const parts = newText.split('/', 2);
-                applyCellDataToDom(parentCell, { isSplit: true, content1: parts[0], content2: parts[1] });
-            } else {
-                 if (parentCell.classList.contains('split-cell')) {
-                    // It was a div inside a split cell
+            const parentCell = element.closest('td, th');
+            if (parentCell) {
+                 if (newText.includes('/')) {
+                    const parts = newText.split('/', 2);
+                    applyCellDataToDom(parentCell, { isSplit: true, content1: parts[0], content2: parts[1] });
+                } else if (parentCell.classList.contains('split-cell')) {
                     const otherDiv = (element === parentCell.children[0]) ? parentCell.children[1] : parentCell.children[0];
                     const otherText = getElementText(otherDiv);
                     if (newText === '' && otherText === '') {
-                        applyCellDataToDom(parentCell, { content: '' }); // Un-split the cell
+                        applyCellDataToDom(parentCell, { content: '' }); 
                     } else {
                         const isFirst = (element === parentCell.children[0]);
                         applyCellDataToDom(parentCell, { isSplit: true, content1: isFirst ? newText : otherText, content2: isFirst ? otherText : newText });
                     }
-                 } else {
+                } else {
                     applyCellDataToDom(parentCell, { content: newText });
-                 }
+                }
+            } else { // It's a header
+                element.textContent = newText;
             }
 
             saveSchedule();
-            pushStateToUndoStack(); // Save state *after* modification
+            pushStateToUndoStack();
         } else {
-            // Restore visual state even if no text change
-            const parentCell = element.closest('td');
-            const state = getCurrentTableStateForCell(parentCell);
-            applyCellDataToDom(parentCell, state);
+            const parentCell = element.closest('td, th');
+             if(parentCell) {
+                const state = getCurrentTableStateForCell(parentCell);
+                applyCellDataToDom(parentCell, state);
+             }
         }
         
         highlightDuplicates(getElementText(element));
@@ -286,6 +280,11 @@ document.addEventListener('DOMContentLoaded', () => {
         cell.innerHTML = '';
         delete cell.dataset.isMassage;
         delete cell.dataset.isPnf;
+
+        if (cell.tagName === 'TH') {
+             cell.textContent = cellObj.content || '';
+             return;
+        }
 
         if (cellObj.isBreak) {
             cell.textContent = BREAK_TEXT;
@@ -345,7 +344,6 @@ document.addEventListener('DOMContentLoaded', () => {
                 document.querySelectorAll('td.editable-cell').forEach(cell => {
                     const time = cell.getAttribute('data-time');
                     const employeeIndex = cell.getAttribute('data-employee-index');
-                    // Firestore saves nested objects, so access them directly
                     const cellData = savedData.scheduleCells?.[time]?.[employeeIndex];
                     if (cellData) {
                         applyCellDataToDom(cell, cellData);
@@ -366,6 +364,7 @@ document.addEventListener('DOMContentLoaded', () => {
     };
 
     const saveSchedule = async () => {
+        console.log("Attempting to save schedule...");
         const scheduleData = {
             employeeHeaders: {},
             scheduleCells: {}
@@ -384,6 +383,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         try {
             await db.collection("schedules").doc("mainSchedule").set(scheduleData);
+            console.log("Schedule successfully written to Firestore.");
             window.showToast('Zapisano w Firestore!', 2000);
         } catch (error) {
             console.error('Error saving data to Firestore:', error);
@@ -392,6 +392,9 @@ document.addEventListener('DOMContentLoaded', () => {
     };
 
     const getCurrentTableStateForCell = (cell) => {
+        if(cell.tagName === 'TH') {
+            return { content: getElementText(cell) };
+        }
         if (cell.classList.contains('break-cell')) {
             return { content: BREAK_TEXT, isBreak: true };
         }
@@ -540,7 +543,7 @@ document.addEventListener('DOMContentLoaded', () => {
     contextRemoveBreak.addEventListener('click', () => {
         if (currentCell) {
             pushStateToUndoStack();
-            applyCellDataToDom(currentCell, { content: '' }); // Clear the cell
+            applyCellDataToDom(currentCell, { content: '' });
             saveSchedule();
             refreshRowHeight(currentCell);
             window.showToast('Usunięto przerwę');
@@ -551,7 +554,7 @@ document.addEventListener('DOMContentLoaded', () => {
     contextClear.addEventListener('click', () => {
         if (currentCell) {
             pushStateToUndoStack();
-            applyCellDataToDom(currentCell, { content: '' }); // Clear the cell
+            applyCellDataToDom(currentCell, { content: '' });
             saveSchedule();
             refreshRowHeight(currentCell);
             window.showToast('Wyczyszczono komórkę');
@@ -567,7 +570,7 @@ document.addEventListener('DOMContentLoaded', () => {
             saveSchedule();
             refreshRowHeight(currentCell);
             window.showToast('Podzielono komórkę');
-            enterEditMode(currentCell.querySelector('div')); // Edit the first part
+            enterEditMode(currentCell.querySelector('div'));
         }
         contextMenu.classList.remove('visible');
     });
@@ -577,7 +580,6 @@ document.addEventListener('DOMContentLoaded', () => {
             pushStateToUndoStack();
             let state = getCurrentTableStateForCell(currentCell);
             
-            // This is a simplified toggle, assumes toggling the whole cell
             state[dataAttribute] = !state[dataAttribute];
             if (state.isSplit) {
                 state[`${dataAttribute}1`] = state[dataAttribute];
@@ -665,12 +667,13 @@ document.addEventListener('DOMContentLoaded', () => {
             if (event.key === 'Enter') {
                  event.preventDefault();
                  exitEditMode(target);
-                 // Move to cell below
                  const parentCell = target.closest('td');
-                 const nextRow = parentCell.closest('tr').nextElementSibling;
-                 if (nextRow) {
-                     const nextCell = nextRow.cells[parentCell.cellIndex];
-                     setActiveCell(nextCell);
+                 if (parentCell) {
+                     const nextRow = parentCell.closest('tr').nextElementSibling;
+                     if (nextRow) {
+                         const nextCell = nextRow.cells[parentCell.cellIndex];
+                         setActiveCell(nextCell);
+                     }
                  }
             }
             return;
@@ -678,13 +681,12 @@ document.addEventListener('DOMContentLoaded', () => {
         
         if (!activeCell) return;
 
-        // Handle Delete and Backspace to clear cell
         if (event.key === 'Delete' || event.key === 'Backspace') {
             event.preventDefault();
             const cellToClear = activeCell.closest('td.editable-cell');
             if (cellToClear) {
                 pushStateToUndoStack();
-                applyCellDataToDom(cellToClear, { content: '' }); // Clear the cell
+                applyCellDataToDom(cellToClear, { content: '' });
                 saveSchedule();
                 refreshRowHeight(cellToClear);
                 window.showToast('Wyczyszczono komórkę');
@@ -707,7 +709,6 @@ document.addEventListener('DOMContentLoaded', () => {
         let nextElement = null;
         const currentParentTd = activeCell.closest('td, th');
         const currentRow = currentParentTd.closest('tr');
-        const rowCells = Array.from(currentRow.cells).filter(c => c.matches('.editable-cell, .editable-header'));
         const currentIndexInRow = Array.from(currentRow.cells).indexOf(currentParentTd);
 
         switch (event.key) {
@@ -765,12 +766,11 @@ document.addEventListener('DOMContentLoaded', () => {
         searchInput.focus();
     });
 
-
     // --- INICJALIZACJA ---
     const init = async () => {
         generateScheduleTable();
         await loadSchedule();
-        pushStateToUndoStack(); // Push initial state
+        pushStateToUndoStack();
         updateUndoRedoButtons();
         loadingOverlay.classList.add('hidden');
     };

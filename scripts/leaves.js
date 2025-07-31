@@ -272,6 +272,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // --- FIRESTORE SAVE AND LOAD ---
 
     const saveLeavesData = async () => {
+        console.log("Attempting to save leaves data...");
         const leavesData = {};
         document.querySelectorAll('#leavesTableBody tr').forEach(row => {
             const employeeName = row.cells[0].textContent;
@@ -288,6 +289,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         try {
             await db.collection("leaves").doc("mainLeaves").set({ leavesData });
+            console.log("Leaves data successfully written to Firestore.");
             window.showToast('Zapisano urlopy w Firestore!', 2000);
         } catch (error) {
             console.error('Błąd zapisu urlopów do Firestore:', error);
