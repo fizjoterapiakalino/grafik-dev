@@ -50,6 +50,12 @@ document.addEventListener('DOMContentLoaded', () => {
         });
         navPanel.appendChild(ul);
 
+        // Add footer information to the navigation panel
+        const footerInfo = document.createElement('div');
+        footerInfo.className = 'footer-info';
+        footerInfo.innerHTML = '<p>&copy; 2023 [Twoja Nazwa/Nazwa Firmy]. Wszelkie prawa zastrzeżone.</p>'; // You can customize this text
+        navPanel.appendChild(footerInfo);
+
         // Add hamburger icon to the header, and panel to the body
         headerRightMenu.appendChild(hamburger);
         document.body.appendChild(navPanel);
