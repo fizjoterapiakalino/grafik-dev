@@ -100,15 +100,17 @@ document.addEventListener('DOMContentLoaded', () => {
     // --- LOGIKA POBIERANIA DANYCH I GENEROWANIA TABELI ---
     const getEmployeeNames = async () => {
         try {
-            const response = await fetch(WEB_APP_URL);
-            if (!response.ok) throw new Error(`Błąd HTTP: ${response.status}`);
-            const savedData = await response.json();
-            if (savedData && savedData.employeeHeaders && Object.keys(savedData.employeeHeaders).length > 0) {
-                return Object.values(savedData.employeeHeaders);
+            const docRef = db.collection("schedules").doc("mainSchedule");
+            const doc = await docRef.get();
+            if (doc.exists) {
+                const data = doc.data();
+                if (data.employeeHeaders && Object.keys(data.employeeHeaders).length > 0) {
+                    return Object.values(data.employeeHeaders);
+                }
             }
-            throw new Error('Brak zapisanych nagłówków pracowników.');
+            throw new Error('Brak zapisanych nagłówków pracowników w Firestore.');
         } catch (error) {
-            console.error('Nie udało się pobrać nazwisk pracowników:', error);
+            console.error('Nie udało się pobrać nazwisk pracowników z Firestore:', error);
             let fallbackNames = [];
             for (let i = 0; i < 13; i++) {
                 fallbackNames.push(`Pracownik ${i + 1}`);
@@ -258,43 +260,77 @@ document.addEventListener('DOMContentLoaded', () => {
         filterAndHighlightTable(''); // Pokaż wszystkie wiersze i usuń podświetlenia
     });
 
-    // --- FUNKCJE ZAPISU I WCZYTYWANIA DANYCH URLOPÓW (DO IMPLEMENTACJI) ---
+    // Add event listener for delete key
+    document.addEventListener('keydown', (event) => {
+        if (event.target.classList.contains('day-cell') && (event.key === 'Delete' || event.key === 'Backspace')) {
+            event.preventDefault(); // Prevent default browser behavior (like navigating back)
+            event.target.textContent = ''; // Clear the cell content
+            saveLeavesData(); // Save the change
+        }
+    });
+
+    // --- FIRESTORE SAVE AND LOAD ---
 
     const saveLeavesData = async () => {
-        console.log("Rozpoczynanie zapisu danych o urlopach..."); // Tymczasowy log
-        // Ta funkcja jest szkieletem - wymaga implementacji logiki do zbierania
-        // danych z tabeli i wysyłania ich do Google Apps Script.
-        // Przykład:
-        /*
         const leavesData = {};
         document.querySelectorAll('#leavesTableBody tr').forEach(row => {
             const employeeName = row.cells[0].textContent;
-            leavesData[employeeName] = {};
-            Array.from(row.cells).slice(1).forEach(cell => {
-                if (cell.textContent.trim() !== '') {
-                    leavesData[employeeName][cell.dataset.month] = cell.textContent.trim();
-                }
-            });
+            if (employeeName) {
+                leavesData[employeeName] = {};
+                Array.from(row.cells).slice(1).forEach(cell => {
+                    if (cell.textContent.trim() !== '') {
+                        const monthIndex = cell.dataset.month;
+                        leavesData[employeeName][monthIndex] = cell.textContent.trim();
+                    }
+                });
+            }
         });
 
         try {
-            // UWAGA: Potrzebny będzie dedykowany endpoint lub parametr w URL
-            const response = await fetch(WEB_APP_URL + '?action=saveLeaves', {
-                method: 'POST',
-                headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-                body: JSON.stringify(leavesData)
-            });
-            console.log("Dane urlopów zapisane!");
+            await db.collection("leaves").doc("mainLeaves").set({ leavesData });
+            window.showToast('Zapisano urlopy w Firestore!', 2000);
         } catch (error) {
-            console.error('Błąd zapisu urlopów:', error);
+            console.error('Błąd zapisu urlopów do Firestore:', error);
+            window.showToast('Błąd zapisu urlopów!', 5000);
         }
-        */
     };
+    
+    const loadLeavesData = async () => {
+        try {
+            const docRef = db.collection("leaves").doc("mainLeaves");
+            const doc = await docRef.get();
+            if (doc.exists) {
+                const data = doc.data().leavesData;
+                if (data) {
+                    Object.keys(data).forEach(employeeName => {
+                        const row = Array.from(leavesTableBody.querySelectorAll('tr')).find(r => r.cells[0].textContent === employeeName);
+                        if (row) {
+                            Object.keys(data[employeeName]).forEach(monthIndex => {
+                                const cell = row.cells[parseInt(monthIndex) + 1];
+                                if (cell) {
+                                    cell.textContent = data[employeeName][monthIndex];
+                                }
+                            });
+                        }
+                    });
+                }
+            }
+        } catch (error) {
+            console.error("Błąd ładowania danych o urlopach z Firestore:", error);
+            window.showToast("Błąd ładowania urlopów.", 5000);
+        }
+    };
+
 
     const initializePage = async () => {
         generateTableHeaders();
         const employeeNames = await getEmployeeNames();
         generateTableRows(employeeNames);
+        await loadLeavesData();
+        // Add tabindex to day cells after generating rows
+        document.querySelectorAll('.day-cell').forEach(cell => {
+            cell.setAttribute('tabindex', '0');
+        });
     };
 
     const hideLoadingOverlay = () => {

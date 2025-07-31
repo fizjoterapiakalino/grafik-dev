@@ -327,37 +327,41 @@ document.addEventListener('DOMContentLoaded', () => {
     };
 
     const loadSchedule = async () => {
-        let savedData = {};
         try {
-            const response = await fetch(WEB_APP_URL);
-            if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
-            savedData = await response.json();
-            if (Object.keys(savedData).length === 0) savedData = { employeeHeaders: {}, scheduleCells: {} };
-        } catch (error) {
-            console.error('Błąd podczas ładowania danych:', error);
-            window.showToast('Błąd ładowania grafiku', 5000);
-            savedData = { employeeHeaders: {}, scheduleCells: {} };
-        }
+            const docRef = db.collection("schedules").doc("mainSchedule");
+            const doc = await docRef.get();
 
-        document.querySelectorAll('th.editable-header').forEach(th => {
-            const index = th.getAttribute('data-employee-index');
-            if (savedData.employeeHeaders && savedData.employeeHeaders[index]) {
-                th.textContent = capitalizeFirstLetter(savedData.employeeHeaders[index]);
-            }
-        });
+            if (doc.exists) {
+                const savedData = doc.data();
+                if (Object.keys(savedData).length === 0) savedData = { employeeHeaders: {}, scheduleCells: {} };
+                
+                document.querySelectorAll('th.editable-header').forEach(th => {
+                    const index = th.getAttribute('data-employee-index');
+                    if (savedData.employeeHeaders && savedData.employeeHeaders[index]) {
+                        th.textContent = capitalizeFirstLetter(savedData.employeeHeaders[index]);
+                    }
+                });
 
-        document.querySelectorAll('td.editable-cell').forEach(cell => {
-            const time = cell.getAttribute('data-time');
-            const employeeIndex = cell.getAttribute('data-employee-index');
-            const cellData = savedData.scheduleCells?.[time]?.[employeeIndex];
-            if (cellData) {
-                applyCellDataToDom(cell, cellData);
+                document.querySelectorAll('td.editable-cell').forEach(cell => {
+                    const time = cell.getAttribute('data-time');
+                    const employeeIndex = cell.getAttribute('data-employee-index');
+                    // Firestore saves nested objects, so access them directly
+                    const cellData = savedData.scheduleCells?.[time]?.[employeeIndex];
+                    if (cellData) {
+                        applyCellDataToDom(cell, cellData);
+                    } else {
+                        cell.className = 'editable-cell';
+                        cell.innerHTML = '';
+                        cell.style.backgroundColor = DEFAULT_CELL_COLOR;
+                    }
+                });
             } else {
-                cell.className = 'editable-cell';
-                cell.innerHTML = '';
-                cell.style.backgroundColor = DEFAULT_CELL_COLOR;
+                console.log("No schedule found, using default.");
             }
-        });
+        } catch (error) {
+            console.error('Error loading data from Firestore:', error);
+            window.showToast('Błąd ładowania grafiku z Firestore', 5000);
+        }
         refreshAllRowHeights();
     };
 
@@ -379,17 +383,11 @@ document.addEventListener('DOMContentLoaded', () => {
         });
 
         try {
-            const response = await fetch(WEB_APP_URL, {
-                method: 'POST',
-                headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-                body: JSON.stringify(scheduleData)
-            });
-            if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
-            await response.json();
-            window.showToast('Zapisano!', 2000);
+            await db.collection("schedules").doc("mainSchedule").set(scheduleData);
+            window.showToast('Zapisano w Firestore!', 2000);
         } catch (error) {
-            console.error('Błąd podczas zapisywania danych:', error);
-            window.showToast('Błąd zapisu!', 5000);
+            console.error('Error saving data to Firestore:', error);
+            window.showToast('Błąd zapisu do Firestore!', 5000);
         }
     };
 
@@ -679,6 +677,20 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         
         if (!activeCell) return;
+
+        // Handle Delete and Backspace to clear cell
+        if (event.key === 'Delete' || event.key === 'Backspace') {
+            event.preventDefault();
+            const cellToClear = activeCell.closest('td.editable-cell');
+            if (cellToClear) {
+                pushStateToUndoStack();
+                applyCellDataToDom(cellToClear, { content: '' }); // Clear the cell
+                saveSchedule();
+                refreshRowHeight(cellToClear);
+                window.showToast('Wyczyszczono komórkę');
+            }
+            return;
+        }
 
         if (event.key === 'Enter') {
             event.preventDefault();
